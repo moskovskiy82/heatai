@@ -21,11 +21,17 @@ INTERVAL = cfg.get("LOOP_INTERVAL_SECONDS", 300)
 INSIDE_TEMP_ENTITY = cfg["INSIDE_TEMP_ENTITY"]
 CURVE_FACTOR_ENTITY = cfg["CURVE_FACTOR_ENTITY"]
 WEATHER_ENTITY = cfg["WEATHER_ENTITY"]
+
+# CHANGED: CALCULATED_FLOW_ENTITY now refers to a *sensor* instead of input_number
 CALCULATED_FLOW_ENTITY = cfg["CALCULATED_FLOW_ENTITY"]
+
+# NEW: dedicated entity for manual mode flowtemp
+MANUAL_FLOW_ENTITY = cfg["MANUAL_FLOW_ENTITY"]
+
 STORAGE_TEMP_ENTITY = cfg["STORAGE_TEMP_ENTITY"]
 HEATING_DISABLE_ENTITY = cfg["HEATING_DISABLE_ENTITY"]
 WATERSTORAGE_DISABLE_ENTITY = cfg["WATERSTORAGE_DISABLE_ENTITY"]
-MODE_ENTITY = cfg.get("MODE_ENTITY", "input_select.heatai")  # <-- NEW: mode selector
+MODE_ENTITY = cfg.get("MODE_ENTITY", "input_select.heatai")  # mode selector
 
 # Defaults
 DEFAULT_TI = cfg.get("DEFAULT_TI", 20.0)
@@ -62,6 +68,14 @@ def ha_get_state(entity_id, default=None):
     except Exception as e:
         logger.error("Error fetching state for %s: %s", entity_id, e)
     return default
+
+def ha_set_state(entity_id, value):
+    """Write state back into Home Assistant (for sensors)."""
+    try:
+        url = f"{HA_URL}/api/states/{entity_id}"
+        requests.post(url, json={"state": value})
+    except Exception as e:
+        logger.warning("Could not update HA state for %s: %s", entity_id, e)
 
 def mqtt_publish(topic, payload):
     """Publish MQTT message."""
@@ -115,9 +129,9 @@ def control_boiler():
     # MANUAL MODE
     # --------------------------
     elif mode.lower() == "manual":
-        # Use flowtemp directly from HA number entity
+        # CHANGED: read flowtemp from MANUAL_FLOW_ENTITY instead of calculated
         try:
-            flow_temp = float(ha_get_state(CALCULATED_FLOW_ENTITY, DEFAULT_TI))
+            flow_temp = float(ha_get_state(MANUAL_FLOW_ENTITY, DEFAULT_TI))
         except ValueError:
             flow_temp = DEFAULT_TI
         flow_temp = max(MIN_FLOW_TEMP, min(MAX_FLOW_TEMP, flow_temp))
@@ -142,7 +156,7 @@ def control_boiler():
         return
 
     # --------------------------
-    # AUTO MODE (room)
+    # AUTO MODE (room/weather curve)
     # --------------------------
     else:
         # Inside temperature setpoint
@@ -168,12 +182,8 @@ def control_boiler():
         flow_temp = max(MIN_FLOW_TEMP, min(MAX_FLOW_TEMP, flow_temp))
         flowtempdesired = str(flow_temp)
 
-        # Write back to HA for monitoring
-        try:
-            url = f"{HA_URL}/api/states/{CALCULATED_FLOW_ENTITY}"
-            requests.post(url, json={"state": flow_temp})
-        except Exception as e:
-            logger.warning("Could not update HA with flow temp: %s", e)
+        # CHANGED: Write back to HA *sensor* for monitoring
+        ha_set_state(CALCULATED_FLOW_ENTITY, flow_temp)
 
         params = FIXED_PARAMS.format(
             hcmode="0",
