@@ -3,7 +3,6 @@ import time
 import logging
 import requests
 import yaml
-import paho.mqtt.publish as publish
 import os
 
 # =========================
@@ -76,11 +75,17 @@ def ha_set_state(entity_id, value):
         logger.error("Error updating HA state for %s: %s", entity_id, e)
 
 def mqtt_publish(topic, payload):
+    """Publish via HA mqtt.publish service (NOT external broker)."""
     try:
-        publish.single(topic, payload, hostname="localhost")
-        logger.info("Published to %s: %s", topic, payload)
+        url = f"{HA_URL}/api/services/mqtt/publish"
+        data = {"topic": topic, "payload": payload}
+        r = requests.post(url, headers=ha_headers(), json=data, timeout=5)
+        if r.status_code == 200:
+            logger.info("Published to %s: %s", topic, payload)
+        else:
+            logger.error("HA mqtt.publish failed (code=%s): %s", r.status_code, r.text)
     except Exception as e:
-        logger.error("Error publishing MQTT: %s", e)
+        logger.error("Error calling HA mqtt.publish: %s", e)
 
 # =========================
 # Main Control Loop
